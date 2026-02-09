@@ -1,0 +1,55 @@
+{
+  "defaults": {
+    "font": {
+      "name": "arial",
+      "size": 24,
+      "colour": "#FFFFFF"
+    }
+  },
+  "button": {
+    "colours": {
+      "normal_bg": "#000000",
+      "hovered_bg": "#333333",
+      "active_bg": "#111111",
+      "normal_text": "#FFFFFF",
+      "hovered_text": "#DDDDDD",
+      "active_text": "#BBBBBB"
+    },
+    "misc": {
+      "shape": "rounded_rectangle",
+      "shape_corner_radius": "6",
+      "border_width": "1",
+      "border_colour": "#555555"
+    }
+  },
+  "label": {
+    "colours": {
+      "normal_text": "#EEEEEE"
+    }
+  },
+  "drop_down_menu": {
+    "colours": {
+      "normal_bg": "#000000",
+      "expanded_bg": "#111111",
+      "normal_text": "#FFFFFF",
+      "hovered_text": "#DDDDDD"
+    },
+    "misc": {
+      "open_button_width": "30"
+    }
+  },
+  "selectors": {
+    "#title_label": {
+      "font": {
+        "size": 48
+      },
+      "colours": {
+        "normal_text": "#FFFFFF"
+      }
+    }
+  },
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}
