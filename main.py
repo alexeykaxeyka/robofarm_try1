@@ -4,6 +4,7 @@ import pygame_gui
 import sys
 import os
 import time
+import random
 
 # инициализация pygame для запуска игрового движка
 pygame.init()
@@ -14,14 +15,92 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Ферма программиста")
 clock = pygame.time.Clock()
 
+# параметры тайлового поля: размер одного тайла 32x32 пикселя
+TILE_SIZE = 32
+GRID_WIDTH, GRID_HEIGHT = 16, 12  # увеличенное поле — 16x12 тайлов (512x384 пикс)
+
+# --- ЗАГРУЗКА СПРАЙТОВ И ФОНА ---
+try:
+    sprite_harvester = pygame.image.load("sprite_harvester.png").convert_alpha()
+    sprite_planter = pygame.image.load("sprite_planter.png").convert_alpha()
+
+    # масштабируем спрайты роботов до нужного размера (30x30 пикселей)
+    robot_sprite_size = 30
+    sprite_harvester = pygame.transform.scale(sprite_harvester, (robot_sprite_size, robot_sprite_size))
+    sprite_planter = pygame.transform.scale(sprite_planter, (robot_sprite_size, robot_sprite_size))
+
+    # загружаем фоновое изображение (200x200)
+    background_tile = pygame.image.load("background_tile.png").convert()
+    # масштабируем до 200x200 на всякий случай
+    background_tile = pygame.transform.scale(background_tile, (200, 200))
+
+    # загружаем спрайт земли для клеток поля (32x32)
+    ground_tile = pygame.image.load("ground_tile.png").convert_alpha()
+    # масштабируем до размера тайла 32x32
+    ground_tile = pygame.transform.scale(ground_tile, (TILE_SIZE, TILE_SIZE))
+
+    # загружаем спрайт домика
+    house_sprite = pygame.image.load("house_sprite.png").convert_alpha()
+    # масштабируем до размера тайла 32x32
+    house_sprite = pygame.transform.scale(house_sprite, (TILE_SIZE, TILE_SIZE))
+
+    # === ВНЕДРЕНИЕ СПРАЙТОВ КУЛЬТУР ===
+    # Загружаем три отдельные картинки
+    img_potato = pygame.image.load("crop_potato.png").convert_alpha()
+    img_carrot = pygame.image.load("crop_carrot.png").convert_alpha()
+    img_wheat = pygame.image.load("crop_wheat.png").convert_alpha()
+
+    # Масштабируем их под размер клетки
+    crop_potato = pygame.transform.scale(img_potato, (TILE_SIZE, TILE_SIZE))
+    crop_carrot = pygame.transform.scale(img_carrot, (TILE_SIZE, TILE_SIZE))
+    crop_wheat = pygame.transform.scale(img_wheat, (TILE_SIZE, TILE_SIZE))
+
+    # Создаем словарь для быстрого доступа по названию культуры
+    crops_sprites = {
+        "potato": crop_potato,
+        "carrot": crop_carrot,
+        "wheat": crop_wheat
+    }
+
+    # Заглушка для растущего растения (зеленый круг), чтобы было видно, что растет
+    growing_plant = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+    pygame.draw.circle(growing_plant, (100, 200, 100), (TILE_SIZE // 2, TILE_SIZE // 2), 8)
+    # ==================================
+
+except FileNotFoundError as e:
+    print(f"⚠️ Ошибка: Файл не найден! Убедитесь, что картинки лежат в папке с игрой.")
+    print(f"Детали: {e}")
+    # Создаем запасные варианты (цветные квадраты), если файл не найден
+    robot_sprite_size = 30
+    sprite_harvester = pygame.Surface((robot_sprite_size, robot_sprite_size))
+    sprite_harvester.fill((255, 0, 0))
+    sprite_planter = pygame.Surface((robot_sprite_size, robot_sprite_size))
+    sprite_planter.fill((0, 255, 0))
+    background_tile = pygame.Surface((200, 200))
+    background_tile.fill((100, 100, 100))
+    ground_tile = pygame.Surface((TILE_SIZE, TILE_SIZE))
+    ground_tile.fill((139, 69, 19))
+    house_sprite = pygame.Surface((TILE_SIZE, TILE_SIZE))
+    house_sprite.fill((139, 69, 19))
+
+    # Запасные квадраты для культур
+    crop_potato = pygame.Surface((TILE_SIZE, TILE_SIZE));
+    crop_potato.fill((180, 100, 50))
+    crop_carrot = pygame.Surface((TILE_SIZE, TILE_SIZE));
+    crop_carrot.fill((255, 100, 0))
+    crop_wheat = pygame.Surface((TILE_SIZE, TILE_SIZE));
+    crop_wheat.fill((255, 255, 0))
+
+    crops_sprites = {"potato": crop_potato, "carrot": crop_carrot, "wheat": crop_wheat}
+    growing_plant = pygame.Surface((TILE_SIZE, TILE_SIZE));
+    growing_plant.fill((100, 200, 100))
+# ---------------------------------
+
 # начальные координаты игрока по центру экрана и скорость его перемещения (в пикселях в секунду)
 player_x = WIDTH // 2
 player_y = HEIGHT // 2
 player_speed = 300
 
-# параметры тайлового поля: размер одного тайла 32x32 пикселя
-TILE_SIZE = 32
-GRID_WIDTH, GRID_HEIGHT = 16, 12  # увеличенное поле — 16x12 тайлов (512x384 пикс)
 # состояние каждого тайла поля: none — пусто, иначе словарь с типом растения и временем до созревания
 farm_grid = [[None for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
 
@@ -29,45 +108,32 @@ farm_grid = [[None for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
 OFFSET_X = (WIDTH - GRID_WIDTH * TILE_SIZE) // 2
 OFFSET_Y = (HEIGHT - GRID_HEIGHT * TILE_SIZE) // 2
 
-# координаты домика (в тайлах — сверху по центру)
-HOUSE_TILE_X = GRID_WIDTH // 2
-HOUSE_TILE_Y = 0
-HOUSE_PX = OFFSET_X + HOUSE_TILE_X * TILE_SIZE + TILE_SIZE // 2
-HOUSE_PY = OFFSET_Y + HOUSE_TILE_Y * TILE_SIZE + TILE_SIZE // 2
+# координаты домиков
+HOUSE_1_X = GRID_WIDTH // 2
+HOUSE_1_Y = 0
+HOUSE_2_X = GRID_WIDTH - 1
+HOUSE_2_Y = GRID_HEIGHT - 1
 
-# начальная позиция робота в тайловых координатах (по центру поля)
-robot_tile_x, robot_tile_y = GRID_WIDTH // 2, GRID_HEIGHT // 2
+# позиции роботов
+planter_x, planter_y = GRID_WIDTH // 2 - 2, GRID_HEIGHT // 2  # посадчик
+harvester_x, harvester_y = GRID_WIDTH // 2 + 2, GRID_HEIGHT // 2  # сборщик
 
-# анимация перемещения робота
-animating = False
-animation_start_x = 0
-animation_start_y = 0
-animation_target_x = 0
-animation_target_y = 0
-animation_start_time = 0
-ANIMATION_DURATION = 2  # секунды
+# анимация для каждого робота
+animating_planter = False
+animation_planter_start_x = 0
+animation_planter_start_y = 0
+animation_planter_target_x = 0
+animation_planter_target_y = 0
+animation_planter_start_time = 0
 
-robot_size = 30
+animating_harvester = False
+animation_harvester_start_x = 0
+animation_harvester_start_y = 0
+animation_harvester_target_x = 0
+animation_harvester_target_y = 0
+animation_harvester_start_time = 0
 
-
-# функция получения текущей пиксельной позиции робота (с учётом анимации)
-def get_robot_pixel_pos():
-    global animating
-    if animating:
-        # рассчитываем текущую позицию робота во время анимации перемещения
-        elapsed = time.time() - animation_start_time
-        t = min(elapsed / ANIMATION_DURATION, 1.0)
-        current_x = animation_start_x + (animation_target_x - animation_start_x) * t
-        current_y = animation_start_y + (animation_target_y - animation_start_y) * t
-        if t >= 1.0:
-            animating = False
-        return current_x, current_y
-    else:
-        # робот стоит на месте — возвращаем пиксельную позицию по текущим тайловым координатам
-        x = OFFSET_X + robot_tile_x * TILE_SIZE + TILE_SIZE // 2
-        y = OFFSET_Y + robot_tile_y * TILE_SIZE + TILE_SIZE // 2
-        return x, y
-
+ANIMATION_DURATION = 2  # секунды (исправлено с 5 на 0.5 для более быстрой анимации)
 
 # глобальная переменная для хранения очков игрока
 player_score = 0
@@ -75,13 +141,10 @@ player_score = 0
 # инвентарь семян
 seeds = {"wheat": 5, "carrot": 5, "potato": 5}
 
-# переменные для хранения программы робота и истории его действий (пока не используются активно)
-robot_program = None
-robot_history = []
-
 # флаг и ссылки на элементы редактора кода (открыт/закрыт)
 code_editor_open = False
 code_editor = None
+current_robot = None  # "planter" или "harvester"
 
 # загрузка пользовательской темы интерфейса из файла theme.json с обработкой возможной ошибки
 theme_path = os.path.join(os.path.dirname(__file__), 'theme.json')
@@ -94,25 +157,31 @@ except Exception as e:
 # текущая сцена игры: главное меню, игровой процесс или настройки
 current_screen = "main_menu"
 
-# путь к файлу с кодом робота
-CODE_FILE = "robot_code.py"
+# пути к файлам кода роботов
+CODE_FILE_PLANTER = "robot_code_planter.py"
+CODE_FILE_HARVESTER = "robot_code_harvester.py"
 
 
 # загрузка кода робота из файла
-def load_robot_code():
+def load_robot_code(robot_type):
+    code_file = CODE_FILE_PLANTER if robot_type == "planter" else CODE_FILE_HARVESTER
     try:
-        with open(CODE_FILE, "r", encoding="utf-8") as f:
+        with open(code_file, "r", encoding="utf-8") as f:
             return f.read()
     except:
-        return "class FarmerBot(BaseRobot):\n    def work(self):\n        pass"
+        if robot_type == "planter":
+            return "class FarmerBot(BaseRobot):\n    def work(self):\n        self.move(1, 0)\n        self.plant('wheat')"
+        else:
+            return "class FarmerBot(BaseRobot):\n    def work(self):\n        self.move(-1, 0)\n        self.harvest()"
 
 
 # сохранение кода робота в файл
-def save_robot_code(code):
+def save_robot_code(code, robot_type):
+    code_file = CODE_FILE_PLANTER if robot_type == "planter" else CODE_FILE_HARVESTER
     try:
-        with open(CODE_FILE, "w", encoding="utf-8") as f:
+        with open(code_file, "w", encoding="utf-8") as f:
             f.write(code)
-        print("✅ код робота сохранён в robot_code.py")
+        print(f"✅ код сохранён в {code_file}")
     except Exception as e:
         print("⚠️ не удалось сохранить код робота:", e)
 
@@ -134,9 +203,10 @@ def save_score():
         with open("score.txt", "w") as f:
             f.write(str(player_score))
         save_inventory()
+        save_game_state()
         print("✅ очки сохранены!")
     except Exception as e:
-        print("⚠️ не удалось сохранить очки     :", e)
+        print("⚠️ не удалось сохранить очки:", e)
 
 
 # сохранение инвентаря
@@ -164,74 +234,151 @@ def load_inventory():
         print("🆕 стартовый инвентарь")
 
 
+def save_game_state():
+    try:
+        # сохраняем позиции роботов
+        with open("robot_positions.txt", "w") as f:
+            f.write(f"{planter_x},{planter_y},{harvester_x},{harvester_y}")
+
+        # сохраняем состояние поля
+        field_data = []
+        for y in range(GRID_HEIGHT):
+            row = []
+            for x in range(GRID_WIDTH):
+                cell = farm_grid[y][x]
+                if cell is None:
+                    row.append("0")
+                else:
+                    crop = cell.get("crop", "0")
+                    ready = cell.get("ready_in", 0)
+                    row.append(f"{crop}:{ready}")
+            field_data.append(",".join(row))
+
+        with open("field_state.txt", "w") as f:
+            f.write("\n".join(field_data))
+
+        print("✅ состояние игры сохранено")
+    except Exception as e:
+        print("⚠️ ошибка сохранения поля:", e)
+
+
+def load_game_state():
+    global planter_x, planter_y, harvester_x, harvester_y, farm_grid
+
+    # загружаем позиции роботов
+    try:
+        with open("robot_positions.txt", "r") as f:
+            data = f.read().strip().split(',')
+            if len(data) == 4:
+                planter_x = int(data[0])
+                planter_y = int(data[1])
+                harvester_x = int(data[2])
+                harvester_y = int(data[3])
+                print(
+                    f"✅ позиции роботов загружены: посадчик=({planter_x},{planter_y}), сборщик=({harvester_x},{harvester_y})")
+    except:
+        planter_x, planter_y = GRID_WIDTH // 2 - 2, GRID_HEIGHT // 2
+        harvester_x, harvester_y = GRID_WIDTH // 2 + 2, GRID_HEIGHT // 2
+        print("🆕 стартовые позиции роботов")
+
+    # загружаем состояние поля
+    try:
+        with open("field_state.txt", "r") as f:
+            lines = f.read().strip().split('\n')
+            if len(lines) == GRID_HEIGHT:
+                for y in range(GRID_HEIGHT):
+                    cells = lines[y].split(',')
+                    if len(cells) == GRID_WIDTH:
+                        for x in range(GRID_WIDTH):
+                            cell_data = cells[x]
+                            if cell_data == "0":
+                                farm_grid[y][x] = None
+                            else:
+                                parts = cell_data.split(':')
+                                if len(parts) >= 2:
+                                    crop = parts[0]
+                                    ready = int(parts[1])
+                                    farm_grid[y][x] = {"crop": crop, "ready_in": ready}
+                print("✅ состояние поля загружено")
+    except:
+        farm_grid = [[None for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
+        print("🆕 чистое поле")
+
+
 load_score()
 load_inventory()
+load_game_state()
 
 
-# базовый класс робота, от которого должны наследоваться все пользовательские программы
+# базовый класс робота
 class BaseRobot:
-    def __init__(self):
-        self.tile_x = robot_tile_x
-        self.tile_y = robot_tile_y
+    def __init__(self, x, y):
+        self.tile_x = x
+        self.tile_y = y
         self.log = []
 
-    # метод перемещения робота на dx тайлов по горизонтали и dy по вертикали с проверкой границ поля
+
+# робот-посадчик — только move и plant
+class PlanterRobot(BaseRobot):
     def move(self, dx, dy):
         self.tile_x += dx
         self.tile_y += dy
         self.tile_x = max(0, min(GRID_WIDTH - 1, self.tile_x))
         self.tile_y = max(0, min(GRID_HEIGHT - 1, self.tile_y))
-        self.log.append(f"move({dx}, {dy}) → ({self.tile_x}, {self.tile_y})")
-        print(f"[robot] переместился на ({dx}, {dy}) → тайл ({self.tile_x}, {self.tile_y})")
+        print(f"[посадчик] переместился на ({dx}, {dy}) → ({self.tile_x}, {self.tile_y})")
 
-    # метод посадки растения в текущей клетке с проверкой занятости и допустимых типов культур
     def plant(self, crop):
         global farm_grid, seeds
         if not (0 <= self.tile_x < GRID_WIDTH and 0 <= self.tile_y < GRID_HEIGHT):
-            print("[robot] ошибка: вне поля!")
+            print("[посадчик] ошибка: вне поля!")
             return
         cell = farm_grid[self.tile_y][self.tile_x]
         if cell is not None:
-            print("[robot] клетка занята!")
+            print("[посадчик] клетка занята!")
             return
         valid_crops = {"wheat", "carrot", "potato"}
         if crop not in valid_crops:
-            print(f"[robot] неизвестная культура: {crop}. используй: wheat, carrot, potato")
+            print(f"[посадчик] неизвестная культура: {crop}. используй: wheat, carrot, potato")
             return
         if seeds[crop] <= 0:
-            print(f"[robot] нет семян {crop}! зайди в домик за припасами.")
+            print(f"[посадчик] нет семян {crop}! зайди в домик за припасами.")
             return
         seeds[crop] -= 1
         farm_grid[self.tile_y][self.tile_x] = {"crop": crop, "ready_in": 25}
-        self.log.append(f"plant({crop})")
-        print(f"[robot] посадил {crop} на ({self.tile_x}, {self.tile_y}). осталось: {seeds[crop]}")
+        print(f"[посадчик] посадил {crop} на ({self.tile_x}, {self.tile_y}). осталось: {seeds[crop]}")
 
-    # метод сбора урожая, если он созрел; добавляет очки игроку и очищает клетку
+
+# робот-сборщик — только move и harvest
+class HarvesterRobot(BaseRobot):
+    def move(self, dx, dy):
+        self.tile_x += dx
+        self.tile_y += dy
+        self.tile_x = max(0, min(GRID_WIDTH - 1, self.tile_x))
+        self.tile_y = max(0, min(GRID_HEIGHT - 1, self.tile_y))
+        print(f"[сборщик] переместился на ({dx}, {dy}) → ({self.tile_x}, {self.tile_y})")
+
     def harvest(self):
         global farm_grid, player_score
         if not (0 <= self.tile_x < GRID_WIDTH and 0 <= self.tile_y < GRID_HEIGHT):
-            print("[robot] ошибка: вне поля!")
+            print("[сборщик] ошибка: вне поля!")
             return
         cell = farm_grid[self.tile_y][self.tile_x]
         if cell is None:
-            print("[robot] нечего собирать!")
+            print("[сборщик] нечего собирать!")
             return
         if cell.get("ready_in", 0) > 0:
-            print("[robot] урожай ещё не созрел!")
+            print("[сборщик] урожай ещё не созрел!")
             return
         crop = cell["crop"]
         points = {"wheat": 10, "carrot": 15, "potato": 20}.get(crop, 5)
         player_score += points
         farm_grid[self.tile_y][self.tile_x] = None
-        self.log.append(f"harvest() → +{points}")
-        print(f"[robot] собрал {crop}! +{points} очков. всего: {player_score}")
+        print(f"[сборщик] собрал {crop}! +{points} очков. всего: {player_score}")
 
 
 # переменные для управления редактором кода (ссылки на ui-элементы)
-code_editor = None
 run_button = None
 close_button = None
-code_editor_open = False
 
 # переменные для управления окном справочника
 help_window_open = False
@@ -240,9 +387,6 @@ help_window = None
 # домик фермера
 house_open = False
 house_window = None
-buy_wheat_button = None
-buy_carrot_button = None
-buy_potato_button = None
 
 # таймер для автоматического созревания растений каждую секунду
 last_growth_update = time.time()
@@ -256,7 +400,7 @@ potato_label = None
 
 
 def open_house():
-    global house_open, house_window, buy_wheat_button, buy_carrot_button, buy_potato_button
+    global house_open, house_window
     if not house_open:
         house_window = pygame_gui.elements.UIPanel(
             relative_rect=pygame.Rect((WIDTH // 2 - 150, 100), (300, 250)),
@@ -269,19 +413,19 @@ def open_house():
             manager=manager,
             container=house_window
         )
-        buy_wheat_button = pygame_gui.elements.UIButton(
+        buy_wheat = pygame_gui.elements.UIButton(
             relative_rect=pygame.Rect((10, 50), (280, 30)),
             text="Пшеница (10 очков)",
             manager=manager,
             container=house_window
         )
-        buy_carrot_button = pygame_gui.elements.UIButton(
+        buy_carrot = pygame_gui.elements.UIButton(
             relative_rect=pygame.Rect((10, 90), (280, 30)),
             text="Морковь (15 очков)",
             manager=manager,
             container=house_window
         )
-        buy_potato_button = pygame_gui.elements.UIButton(
+        buy_potato = pygame_gui.elements.UIButton(
             relative_rect=pygame.Rect((10, 130), (280, 30)),
             text="Картофель (20 очков)",
             manager=manager,
@@ -291,7 +435,7 @@ def open_house():
 
 
 def close_house():
-    global house_open, house_window, buy_wheat_button, buy_carrot_button, buy_potato_button
+    global house_open, house_window
     if house_open:
         house_window.kill()
         house_open = False
@@ -299,7 +443,7 @@ def close_house():
 
 # создание элементов главного меню: заголовок и три кнопки
 def create_main_menu():
-    global title_label, play_button, settings_button, quit_button
+    global title_label, play_button, quit_button
     title_label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect((WIDTH // 2 - 200, 50), (400, 60)),
         text="Ферма программиста",
@@ -309,11 +453,6 @@ def create_main_menu():
     play_button = pygame_gui.elements.UIButton(
         relative_rect=pygame.Rect((WIDTH // 2 - 100, 200), (200, 50)),
         text="Играть",
-        manager=manager
-    )
-    settings_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((WIDTH // 2 - 100, 270), (200, 50)),
-        text="Настройки",
         manager=manager
     )
     quit_button = pygame_gui.elements.UIButton(
@@ -381,27 +520,14 @@ def open_help_window():
     global help_window_open, help_window
     if not help_window_open:
         help_text = (
-            "<b>Справочник по API робота</b>\n\n"
-            "<b>class FarmerBot(BaseRobot):</b>\n"
-            "Все программы должны наследоваться от BaseRobot.\n\n"
-
-            "<b>self.move(dx, dy)</b>\n"
-            "Перемещает робота на dx тайлов вправо и dy тайлов вниз.\n"
-            "Пример: self.move(1, 0) → вправо на 1 тайл.\n\n"
-
-            "<b>self.plant(crop)</b>\n"
-            "Сажает растение на текущей клетке. Доступно: 'wheat', 'carrot', 'potato'.\n\n"
-
-            "<b>self.harvest()</b>\n"
-            "Собирает урожай, если он созрел. Приносит очки!\n\n"
-
-            "<b>Циклы</b>\n"
-            "Можно использовать: <b>for i in range(N):</b>\n"
-            "Пример: for i in range(3): self.move(1, 0)\n\n"
-
-            "<b>Правила:</b>\n"
-            "- Все команды пишутся внутри метода <b>work(self)</b>.\n"
-            "- Нельзя использовать import, open, exec, eval и другие опасные команды.\n"
+            "<b>Робот-посадчик</b>\n"
+            "- self.move(dx, dy)\n"
+            "- self.plant('wheat'/'carrot'/'potato')\n\n"
+            "<b>Робот-сборщик</b>\n"
+            "- self.move(dx, dy)\n"
+            "- self.harvest()\n\n"
+            "<b>Циклы:</b> for i in range(N)\n"
+            "<b>Важно:</b> каждый робот видит только свои методы!"
         )
 
         help_window = pygame_gui.elements.UIPanel(
@@ -440,22 +566,58 @@ create_main_menu()
 
 # закрытие редактора кода и удаление его элементов из памяти
 def close_code_editor():
-    global code_editor_open, code_editor, run_button, close_button
+    global code_editor_open, code_editor, run_button, close_button, current_robot
     if code_editor_open:
         code_editor.kill()
         run_button.kill()
         close_button.kill()
         code_editor = run_button = close_button = None
         code_editor_open = False
+        current_robot = None
+
+
+# функция получения текущей пиксельной позиции робота (с учётом анимации)
+def get_robot_pixel_pos(robot_type):
+    global animating_planter, animating_harvester
+
+    current_time = time.time()
+
+    if robot_type == "planter" and animating_planter:
+        elapsed = current_time - animation_planter_start_time
+        t = min(elapsed / ANIMATION_DURATION, 1.0)
+        x = animation_planter_start_x + (animation_planter_target_x - animation_planter_start_x) * t
+        y = animation_planter_start_y + (animation_planter_target_y - animation_planter_start_y) * t
+        if t >= 1.0:
+            animating_planter = False
+        return x, y
+    elif robot_type == "harvester" and animating_harvester:
+        elapsed = current_time - animation_harvester_start_time
+        t = min(elapsed / ANIMATION_DURATION, 1.0)
+        x = animation_harvester_start_x + (animation_harvester_target_x - animation_harvester_start_x) * t
+        y = animation_harvester_start_y + (animation_harvester_target_y - animation_harvester_start_y) * t
+        if t >= 1.0:
+            animating_harvester = False
+        return x, y
+    else:
+        if robot_type == "planter":
+            x = OFFSET_X + planter_x * TILE_SIZE + TILE_SIZE // 2
+            y = OFFSET_Y + planter_y * TILE_SIZE + TILE_SIZE // 2
+        else:
+            x = OFFSET_X + harvester_x * TILE_SIZE + TILE_SIZE // 2
+            y = OFFSET_Y + harvester_y * TILE_SIZE + TILE_SIZE // 2
+        return x, y
 
 
 # выполнение пользовательского кода в изолированном окружении с ограниченным набором функций
 def execute_robot_code():
-    global robot_program, robot_tile_x, robot_tile_y, player_score, animating, animation_start_x, animation_start_y, animation_target_x, animation_target_y, animation_start_time
+    global planter_x, planter_y, harvester_x, harvester_y, player_score, current_robot
+    global animating_planter, animation_planter_start_x, animation_planter_start_y, animation_planter_target_x, animation_planter_target_y, animation_planter_start_time
+    global animating_harvester, animation_harvester_start_x, animation_harvester_start_y, animation_harvester_target_x, animation_harvester_target_y, animation_harvester_start_time
+
     try:
         user_code = code_editor.get_text()
-        save_robot_code(user_code)  # СОХРАНЯЕМ КОД В ФАЙЛ!
-        # разрешенные функции
+        save_robot_code(user_code, current_robot)
+
         safe_builtins = {
             'range': range,
             'len': len,
@@ -468,7 +630,9 @@ def execute_robot_code():
         }
         safe_globals = {
             "__builtins__": safe_builtins,
-            "BaseRobot": BaseRobot
+            "BaseRobot": BaseRobot,
+            "PlanterRobot": PlanterRobot,
+            "HarvesterRobot": HarvesterRobot
         }
         local_vars = {}
 
@@ -479,33 +643,52 @@ def execute_robot_code():
             return
 
         bot_class = local_vars["FarmerBot"]
-        if not isinstance(bot_class, type) or not issubclass(bot_class, BaseRobot):
-            print("ошибка: FarmerBot должен наследоваться от BaseRobot.")
+        if current_robot == "planter" and not issubclass(bot_class, PlanterRobot):
+            print("ошибка: посадчик должен наследоваться от PlanterRobot")
+            return
+        if current_robot == "harvester" and not issubclass(bot_class, HarvesterRobot):
+            print("ошибка: сборщик должен наследоваться от HarvesterRobot")
             return
 
-        # Сохраняем исходную позицию для анимации
-        start_tile_x, start_tile_y = robot_tile_x, robot_tile_y
+        # сохраняем начальную позицию для анимации
+        if current_robot == "planter":
+            start_x, start_y = planter_x, planter_y
+        else:
+            start_x, start_y = harvester_x, harvester_y
 
-        robot_program = bot_class()
-        if not hasattr(robot_program, 'work'):
+        # создаём робота с текущей позицией
+        if current_robot == "planter":
+            bot = bot_class(planter_x, planter_y)
+        else:
+            bot = bot_class(harvester_x, harvester_y)
+
+        if not hasattr(bot, 'work'):
             print("ошибка: у FarmerBot нет метода 'work'.")
             return
 
-        robot_program.work()
+        bot.work()
 
-        # Обновляем целевую позицию
-        robot_tile_x = robot_program.tile_x
-        robot_tile_y = robot_program.tile_y
+        # обновляем глобальные позиции
+        if current_robot == "planter":
+            planter_x, planter_y = bot.tile_x, bot.tile_y
+            # запускаем анимацию
+            animating_planter = True
+            animation_planter_start_x = OFFSET_X + start_x * TILE_SIZE + TILE_SIZE // 2
+            animation_planter_start_y = OFFSET_Y + start_y * TILE_SIZE + TILE_SIZE // 2
+            animation_planter_target_x = OFFSET_X + planter_x * TILE_SIZE + TILE_SIZE // 2
+            animation_planter_target_y = OFFSET_Y + planter_y * TILE_SIZE + TILE_SIZE // 2
+            animation_planter_start_time = time.time()
+        else:
+            harvester_x, harvester_y = bot.tile_x, bot.tile_y
+            # запускаем анимацию
+            animating_harvester = True
+            animation_harvester_start_x = OFFSET_X + start_x * TILE_SIZE + TILE_SIZE // 2
+            animation_harvester_start_y = OFFSET_Y + start_y * TILE_SIZE + TILE_SIZE // 2
+            animation_harvester_target_x = OFFSET_X + harvester_x * TILE_SIZE + TILE_SIZE // 2
+            animation_harvester_target_y = OFFSET_Y + harvester_y * TILE_SIZE + TILE_SIZE // 2
+            animation_harvester_start_time = time.time()
 
-        # Запускаем анимацию
-        animating = True
-        animation_start_x = OFFSET_X + start_tile_x * TILE_SIZE + TILE_SIZE // 2
-        animation_start_y = OFFSET_Y + start_tile_y * TILE_SIZE + TILE_SIZE // 2
-        animation_target_x = OFFSET_X + robot_tile_x * TILE_SIZE + TILE_SIZE // 2
-        animation_target_y = OFFSET_Y + robot_tile_y * TILE_SIZE + TILE_SIZE // 2
-        animation_start_time = time.time()
-
-        print("программа робота успешно выполнена! анимация запущена.")
+        print(f"✅ программа {current_robot} выполнена!")
 
     except Exception as e:
         print(f"ошибка выполнения кода: {e}")
@@ -514,10 +697,11 @@ def execute_robot_code():
 
 
 # открытие редактора кода с пустым шаблоном для пользователя
-def open_code_editor():
-    global code_editor_open, code_editor, run_button, close_button
+def open_code_editor(robot_type):
+    global code_editor_open, code_editor, run_button, close_button, current_robot
     if not code_editor_open:
-        initial_code = load_robot_code()  # ← ЗАГРУЖАЕМ КОД ИЗ ФАЙЛА!
+        current_robot = robot_type
+        initial_code = load_robot_code(robot_type)
         code_editor = pygame_gui.elements.UITextEntryBox(
             relative_rect=pygame.Rect((100, 100), (600, 350)),
             initial_text=initial_code,
@@ -573,21 +757,28 @@ while running:
             player_x = max(10, min(WIDTH - 30, player_x))
             player_y = max(10, min(HEIGHT - 30, player_y))
 
-            # проверка входа в домик
-            distance_to_house = ((player_x - HOUSE_PX) ** 2 + (player_y - HOUSE_PY) ** 2) ** 0.5
-            if distance_to_house < 40 and not house_open:
+            # проверка входа в домик 1 (верхний центр)
+            hx1 = OFFSET_X + HOUSE_1_X * TILE_SIZE + TILE_SIZE // 2
+            hy1 = OFFSET_Y + HOUSE_1_Y * TILE_SIZE + TILE_SIZE // 2
+            if ((player_x - hx1) ** 2 + (player_y - hy1) ** 2) ** 0.5 < 40 and not house_open:
                 open_house()
 
-        # обработка клика по роботу для открытия редактора кода
+        # обработка клика по роботам для открытия редактора кода
         if (event.type == pygame.MOUSEBUTTONDOWN
                 and event.button == 1
                 and current_screen == "game"
                 and not code_editor_open):
-            robot_x, robot_y = get_robot_pixel_pos()
             mouse_x, mouse_y = event.pos
-            if (robot_x - robot_size // 2 <= mouse_x <= robot_x + robot_size // 2 and
-                    robot_y - robot_size // 2 <= mouse_y <= robot_y + robot_size // 2):
-                open_code_editor()
+
+            # позиция посадчика
+            px, py = get_robot_pixel_pos("planter")
+            if abs(mouse_x - px) < 20 and abs(mouse_y - py) < 20:
+                open_code_editor("planter")
+
+            # позиция сборщика
+            hx, hy = get_robot_pixel_pos("harvester")
+            if ((mouse_x - hx) ** 2 + (mouse_y - hy) ** 2) ** 0.5 < 20:
+                open_code_editor("harvester")
 
         # закрытие редактора или справочника по нажатию esc
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -598,7 +789,7 @@ while running:
             elif house_open:
                 close_house()
 
-        # обработка нажатий на кнопки интерфейса: переходы между экранами и действия в редакторе
+        # обработка нажатий на кнопки интерфейса
         if event.type == pygame_gui.UI_BUTTON_PRESSED:
             if current_screen == "main_menu":
                 if event.ui_element == play_button:
@@ -624,56 +815,79 @@ while running:
                     close_code_editor()
 
             if house_open:
-                if event.ui_element == buy_wheat_button:
-                    if player_score >= 10:
-                        player_score -= 10
-                        seeds["wheat"] += 5
-                        print("куплено 5 пшеницы")
-                elif event.ui_element == buy_carrot_button:
-                    if player_score >= 15:
-                        player_score -= 15
-                        seeds["carrot"] += 5
-                        print("куплено 5 моркови")
-                elif event.ui_element == buy_potato_button:
-                    if player_score >= 20:
-                        player_score -= 20
-                        seeds["potato"] += 5
-                        print("куплено 5 картофеля")
+                if "Пшеница" in event.ui_element.text and player_score >= 10:
+                    player_score -= 10
+                    seeds["wheat"] += 5
+                elif "Морковь" in event.ui_element.text and player_score >= 15:
+                    player_score -= 15
+                    seeds["carrot"] += 5
+                elif "Картофель" in event.ui_element.text and player_score >= 20:
+                    player_score -= 20
+                    seeds["potato"] += 5
 
         manager.process_events(event)
 
     manager.update(time_delta)
 
-    # отрисовка игрового поля, игрока, растений и робота только на игровом экране
+    # отрисовка игрового поля, игрока, растений и роботов
     if current_screen == "game":
-        screen.fill((30, 30, 30))
+        # === ОТРИСОВКА ФОНА (САМЫЙ ЗАДНИЙ ПЛАН) ===
+        # Рисуем фон тайлами 4x3 (800/200 = 4, 600/200 = 3)
+        for row in range(3):
+            for col in range(4):
+                x = col * 200
+                y = row * 200
+                screen.blit(background_tile, (x, y))
+        # ===========================================
+
         pygame.draw.rect(screen, (255, 255, 255), (player_x, player_y, 20, 20))
-        # отрисовка поля с центрированием и сеткой
+
+        # === ОТРИСОВКА ПОЛЯ С НОВЫМИ СПРАЙТАМИ ЗЕМЛИ И РАСТЕНИЙ ===
         for y in range(GRID_HEIGHT):
             for x in range(GRID_WIDTH):
                 px = OFFSET_X + x * TILE_SIZE
                 py = OFFSET_Y + y * TILE_SIZE
+
+                # Рисуем спрайт земли для каждой клетки
+                screen.blit(ground_tile, (px, py))
+
+                # Если в клетке есть растение, рисуем его поверх земли
                 cell = farm_grid[y][x]
                 if cell:
-                    color = (100, 200, 100) if cell["ready_in"] <= 0 else (150, 150, 50)
-                    pygame.draw.rect(screen, color, (px, py, TILE_SIZE, TILE_SIZE))
-                # тонкая серая сетка для удобства
-                pygame.draw.rect(screen, (50, 50, 50), (px, py, TILE_SIZE, TILE_SIZE), 1)
-        # домик фермера
-        pygame.draw.rect(screen, (139, 69, 19), (HOUSE_PX - 15, HOUSE_PY - 15, 30, 30))  # коричневый дом
-        pygame.draw.polygon(screen, (220, 20, 60), [
-            (HOUSE_PX - 25, HOUSE_PY - 15),
-            (HOUSE_PX + 25, HOUSE_PY - 15),
-            (HOUSE_PX, HOUSE_PY - 40)
-        ])  # красная крыша
-        # робот с анимацией
-        robot_x, robot_y = get_robot_pixel_pos()
-        robot_points = [
-            (robot_x, robot_y - robot_size // 2),
-            (robot_x - robot_size // 2, robot_y + robot_size // 2),
-            (robot_x + robot_size // 2, robot_y + robot_size // 2)
-        ]
-        pygame.draw.polygon(screen, (255, 255, 255), robot_points)
+                    # Получаем тип культуры и статус зрелости
+                    crop_type = cell.get("crop")
+                    ready_time = cell.get("ready_in", 0)
+
+                    if ready_time <= 0:
+                        # Растение созрело: выбираем спрайт из словаря по типу культуры
+                        plant_sprite_to_draw = crops_sprites.get(crop_type, crop_wheat)
+                    else:
+                        # Растение еще растет: рисуем заглушку (зеленый росток)
+                        plant_sprite_to_draw = growing_plant
+
+                    # Рисуем растение в центре клетки
+                    screen.blit(plant_sprite_to_draw, (px, py))
+        # ===================================================
+
+        # === ОТРИСОВКА ДОМИКОВ (ТОЛЬКО СПРАЙТ, БЕЗ КВАДРАТОВ И ТРЕУГОЛЬНИКОВ) ===
+        # Домик 1 (верхний центр)
+        h1x = OFFSET_X + HOUSE_1_X * TILE_SIZE
+        h1y = OFFSET_Y + HOUSE_1_Y * TILE_SIZE
+        screen.blit(house_sprite, (h1x, h1y))
+
+        # Домик 2 (нижний правый угол)
+        h2x = OFFSET_X + HOUSE_2_X * TILE_SIZE
+        h2y = OFFSET_Y + HOUSE_2_Y * TILE_SIZE
+        screen.blit(house_sprite, (h2x, h2y))
+        # ======================================================================
+
+        # робот-посадчик с анимацией (спрайт)
+        px, py = get_robot_pixel_pos("planter")
+        screen.blit(sprite_planter, (px - robot_sprite_size // 2, py - robot_sprite_size // 2))
+
+        # робот-сборщик с анимацией (спрайт)
+        hx, hy = get_robot_pixel_pos("harvester")
+        screen.blit(sprite_harvester, (hx - robot_sprite_size // 2, hy - robot_sprite_size // 2))
     else:
         screen.fill((20, 20, 20))
 
@@ -694,5 +908,6 @@ while running:
 
 # корректное завершение работы pygame и программы
 save_score()
+save_game_state()
 pygame.quit()
 sys.exit()
