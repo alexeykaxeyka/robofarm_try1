@@ -1,0 +1,2 @@
+planters:1,6;
+harvesters:10,15;
